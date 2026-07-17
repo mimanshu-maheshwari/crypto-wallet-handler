@@ -1,4 +1,8 @@
+use crate::error::WalletError;
+use k256::{SecretKey, elliptic_curve::sec1::ToSec1Point};
 use sha2::{Digest, Sha512};
+use tiny_keccak::{Hasher, Keccak};
+
 pub(crate) fn hmac_sha512(key: &[u8], msg: &[u8]) -> [u8; 64] {
     const BLOCK: usize = 128;
     let mut key0 = [0u8; BLOCK];
@@ -63,4 +67,29 @@ pub(crate) fn pbkdf2_hmac_sha512(
     }
     out.truncate(out_len);
     out
+}
+
+pub(crate) fn public_key_from_private_key(private_key: &[u8; 32]) -> Result<Vec<u8>, WalletError> {
+    let secret = SecretKey::from_slice(private_key).map_err(|_| WalletError::InvalidPrivateKey)?;
+    let public = secret.public_key();
+    let encoded = public.to_sec1_point(false);
+    Ok(encoded.as_bytes().to_vec())
+}
+
+pub fn ethereum_address_from_public_key(public_key: &[u8]) -> Result<String, WalletError> {
+    if public_key.len() != 65 || public_key[0] != 0x04 {
+        return Err(WalletError::InvalidPublicKey);
+    }
+
+    let public_key_without_prefix = &public_key[1..];
+
+    let mut hasher = Keccak::v256();
+    hasher.update(public_key_without_prefix);
+
+    let mut output = [0u8; 32];
+    hasher.finalize(&mut output);
+
+    let address_bytes = &output[12..];
+
+    Ok(format!("0x{}", hex::encode(address_bytes)))
 }
