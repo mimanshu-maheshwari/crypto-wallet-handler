@@ -3,11 +3,18 @@ name = "wallet-app"
 version = "0.1.0"
 edition = "2024"
 
+
 [dependencies]
 hex = "0.4.3"
 anyhow = "1.0.103"
 rand = "0.10.2"
 sha2 = "0.11.0"
 unicode-normalization = "0.1.25"
-k256 = { version = "0.13", default-features = false, features = ["ecdsa"] }
-ripemd = "0.1"
+k256 = { version = "0.14", default-features = false, features = ["ecdsa"] }
+ripemd = "0.2"
+
+[dev-dependencies]
+bip39 = "2.2.2"
+bitcoin = "0.32.102"
+
+

@@ -23,19 +23,11 @@ static WORD_LIST: LazyLock<Vec<&'static str>> = LazyLock::new(|| {
 });
 
 #[derive(Debug, Default)]
+#[repr(usize)]
 pub enum WordCount {
     #[default]
-    Twelve,
-    Sixteen,
-}
-
-impl From<WordCount> for usize {
-    fn from(value: WordCount) -> Self {
-        match value {
-            Twelve => 12,
-            Sixteen => 16,
-        }
-    }
+    Twelve = 12,
+    Sixteen = 16,
 }
 
 impl TryFrom<usize> for WordCount {
@@ -52,32 +44,21 @@ impl TryFrom<usize> for WordCount {
     }
 }
 
-#[derive(Debug, Default, Clone, Copy)]
-pub enum Bip {
-    #[default]
-    Bip39,
-}
-
 #[derive(Debug)]
-pub struct Bip39;
+pub(crate) struct Bip39;
 
 impl Bip39 {
-    pub(crate) fn generate_mnemonic(word_count: usize) -> Result<String, MnemonicsError> {
+    pub(crate) fn generate_mnemonic(word_count: WordCount) -> Result<String, MnemonicsError> {
         let entropy_byte_size = match word_count {
-            12 => 16,
-            24 => 32,
-            x => {
-                return Err(MnemonicsError::InvalidWordCount(format!(
-                    "Unsupported word count {x}. Allowed value are 12 and 24."
-                )));
-            }
+            Twelve => 16,
+            Sixteen => 32,
         };
 
         // create secure random entropy
         let mut entropy = vec![0u8; entropy_byte_size];
         rand::fill(&mut entropy);
 
-        Self::entropy_to_mnemonics(&entropy, entropy_byte_size, word_count)
+        Self::entropy_to_mnemonics(&entropy, entropy_byte_size, word_count as usize)
     }
 
     pub(crate) fn entropy_to_mnemonics(
@@ -143,13 +124,9 @@ impl Bip39 {
             .try_into()
             .expect("PBKDF2 output must be 64 bytes")
     }
-
-    pub(crate) fn _mnemonic_to_entropy(_mnemonic: String) -> Result<Vec<u8>, MnemonicsError> {
-        todo!()
-    }
 }
 
-pub struct Bip32;
+pub(crate) struct Bip32;
 impl Bip32 {
     pub(crate) fn master_from_seed(seed: &[u8]) -> ExtendedPrivKey {
         assert_eq!(seed.len(), 64, "seed len should be 64 bytes");
@@ -169,9 +146,10 @@ impl Bip32 {
         }
     }
 }
+
 pub type Fingerprint = [u8; 4];
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub struct ExtendedPrivKey {
     // BIP32 fields
     pub depth: u8,                       // m=0, children increment
@@ -185,14 +163,14 @@ pub struct ExtendedPrivKey {
 
 impl Display for ExtendedPrivKey {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        writeln!(f, "depth: {}", self.depth)?;
+        writeln!(f, "Depth              : {}", self.depth)?;
         let fp = hex::encode(self.parent_fingerprint);
-        writeln!(f, "parent fingerprint: {fp}")?;
-        writeln!(f, "child number: {}", self.child_number)?;
+        writeln!(f, "Parent Fingerprint : {fp}")?;
+        writeln!(f, "Child Number       : {}", self.child_number)?;
         let cc = hex::encode(self.chain_code);
-        writeln!(f, "chain code: {cc}")?;
+        writeln!(f, "Chain Code         : {cc}")?;
         let key = hex::encode(self.key);
-        writeln!(f, "Key : {key}")?;
+        writeln!(f, "Private Key        : {key}")?;
         Ok(())
     }
 }
@@ -209,9 +187,11 @@ impl ExtendedPrivKey {
 
 #[cfg(test)]
 mod test {
+    use crate::wallet::mnemonics::WordCount::{Sixteen, Twelve};
+
     #[test]
     fn test_generate_mnemonics() {
-        for wc in [12, 24] {
+        for wc in [Twelve, Sixteen] {
             match super::Bip39::generate_mnemonic(wc) {
                 Ok(mnemonic) => println!("{mnemonic}"),
                 Err(err) => {

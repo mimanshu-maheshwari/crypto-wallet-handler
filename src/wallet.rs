@@ -1,13 +1,15 @@
 pub mod mnemonics;
 use crate::{
     error::WalletError,
-    wallet::mnemonics::{Bip, Bip32, Bip39, ExtendedPrivKey, WordCount},
+    wallet::mnemonics::{
+        Bip32, Bip39, ExtendedPrivKey,
+        WordCount::{self, Twelve},
+    },
 };
-use std::fmt::Display;
+use std::{fmt::Display, marker::PhantomData};
 
-#[derive(Debug)]
+#[derive(Debug, Clone, PartialEq, PartialOrd, Eq, Ord)]
 pub struct Wallet {
-    bip_algo: Bip,
     mnemonic: String,
     master: ExtendedPrivKey,
 }
@@ -24,34 +26,42 @@ impl Wallet {
         &self.mnemonic
     }
 
-    pub fn blip(&self) -> Bip {
-        self.bip_algo
-    }
-
     pub fn master(&self) -> &ExtendedPrivKey {
         &self.master
     }
 }
 
-#[derive(Debug, Default)]
-pub struct WalletBuilder {
-    bip_algo: mnemonics::Bip,
-    word_count: usize,
+#[derive(Debug)]
+pub struct WalletBuilder<T = ()> {
+    word_count: WordCount,
     passphrase: Option<String>,
+    mnemonic: String,
+    phantom_data: PhantomData<T>,
 }
 
 impl WalletBuilder {
-    pub fn new() -> Self {
-        Default::default()
+    pub fn create() -> WalletBuilder<CreateFlow> {
+        WalletBuilder {
+            word_count: Twelve,
+            passphrase: None,
+            mnemonic: String::from(""),
+            phantom_data: PhantomData,
+        }
     }
 
-    pub fn bip(mut self, bip: Bip) -> Self {
-        self.bip_algo = bip;
-        self
+    pub fn recover(mnemonic_str: &str) -> WalletBuilder<RecoverFlow> {
+        WalletBuilder {
+            word_count: Twelve,
+            passphrase: None,
+            mnemonic: String::from(mnemonic_str),
+            phantom_data: PhantomData,
+        }
     }
+}
+pub struct CreateFlow;
 
+impl WalletBuilder<CreateFlow> {
     pub fn word_count(mut self, count: WordCount) -> Self {
-        let count = usize::from(count);
         self.word_count = count;
         self
     }
@@ -61,42 +71,54 @@ impl WalletBuilder {
         self
     }
 
-    pub fn create(self) -> Result<Wallet, WalletError> {
-        match self.bip_algo {
-            Bip::Bip39 => {
-                let mnemonic = match Bip39::generate_mnemonic(self.word_count) {
-                    Ok(mnemonic) => mnemonic,
-                    Err(err) => return Err(WalletError::MnemonicsError(err)),
-                };
-                let pass = self.passphrase.unwrap_or_default();
-                let seed = Bip39::mnemonic_to_seed(&mnemonic, &pass);
-                // 1) BIP32 master_from_seed(seed64)
-                let master = Bip32::master_from_seed(&seed);
-                Ok(Wallet {
-                    bip_algo: self.bip_algo,
-                    mnemonic,
-                    master,
-                })
-            }
-        }
+    pub fn build(self) -> Result<Wallet, WalletError> {
+        let mnemonic = match Bip39::generate_mnemonic(self.word_count) {
+            Ok(mnemonic) => mnemonic,
+            Err(err) => return Err(WalletError::MnemonicsError(err)),
+        };
+        let pass = self.passphrase.unwrap_or_default();
+        let seed = Bip39::mnemonic_to_seed(&mnemonic, &pass);
+        // 1) BIP32 master_from_seed(seed64)
+        let master = Bip32::master_from_seed(&seed);
+        Ok(Wallet { mnemonic, master })
     }
+}
+pub struct RecoverFlow;
+impl WalletBuilder<RecoverFlow> {
+    pub fn build(self) -> Result<Wallet, WalletError> {
+        let pass = self.passphrase.unwrap_or_default();
 
-    pub fn recover(self, mnemonic: String) -> Result<Wallet, WalletError> {
-        match self.bip_algo {
-            Bip::Bip39 => {
-                let pass = self.passphrase.unwrap_or_default();
+        let seed64: [u8; 64] = Bip39::mnemonic_to_seed(&self.mnemonic, &pass);
+        let master = Bip32::master_from_seed(&seed64);
 
-                let seed64: [u8; 64] = Bip39::mnemonic_to_seed(&mnemonic, &pass);
-                let master = Bip32::master_from_seed(&seed64);
+        // derive path -> addresses/keys
 
-                // derive path -> addresses/keys
+        Ok(Wallet {
+            mnemonic: self.mnemonic,
+            master,
+        })
+    }
+}
 
-                Ok(Wallet {
-                    bip_algo: self.bip_algo,
-                    mnemonic,
-                    master,
-                })
-            }
-        }
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn test_wallet_create_and_recover() -> anyhow::Result<()> {
+        let wallet = WalletBuilder::create()
+            .word_count(WordCount::Twelve)
+            .pass("")
+            .build()?;
+        println!("Created wallet   :\n{wallet}\n\n");
+
+        let phrase = wallet.mnemonic();
+        let recovery_wallet = WalletBuilder::recover(phrase).build()?;
+        println!("Recovered wallet :\n{recovery_wallet}");
+
+        assert_eq!(wallet.mnemonic(), recovery_wallet.mnemonic());
+        assert_eq!(wallet.master, recovery_wallet.master);
+        assert_eq!(wallet, recovery_wallet);
+
+        Ok(())
     }
 }
